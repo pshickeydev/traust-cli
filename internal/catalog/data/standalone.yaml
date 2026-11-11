@@ -51,9 +51,6 @@ skills:
   triage:
     role: triage-verifier
     min_model_class: mythos
-  countersign:
-    min_model_class: opus
-    env: ["Red Hat LDAP (VPN)"]
   validate-findings:
     role: validation-planner
     min_model_class: mythos
