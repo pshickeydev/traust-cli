@@ -219,9 +219,13 @@ trade — the slim image remains the hermetic, Go-module-only artifact.
 | `SKIP_GRYPE_DB` | `0` | `1` drops the ~3 GB grype DB (grype re-fetches it at runtime when online); the osv offline DBs are kept. |
 
 `HOME=/opt/traust` is load-bearing: `init` writes the workspace to
-`$HOME/.traust` and stores **absolute** paths (venv, uv-managed Python, config
+$HOME/.traust and stores **absolute** paths (venv, uv-managed Python, config
 home, osv DB) in `state.json`/env. Do not override `HOME` when running the image,
-or state resolution breaks.
+or state resolution breaks. `$HOME` itself is owned `1001:0` and
+group-writable, and the build keeps npm's cache out of it, so tools that
+create per-user state under `$HOME` (opengrep's `~/.opengrep`, claude's
+`~/.claude`) work as the runtime user — older images shipped `/opt/traust`
+root-owned and broke them (issue #58).
 
 ### Build and smoke-test locally
 

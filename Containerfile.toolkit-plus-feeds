@@ -196,11 +196,15 @@ RUN dnf update-minimal -y --security --sec-severity=Important --sec-severity=Cri
        fi \
     && dnf clean all && rm -rf /var/cache/dnf
 
-# pip-audit (upstream path again) and the optional harness binary. The harness
-# default maps to the adapter's name (claude -> `claude`); TRAUST_CLI_<ID>_BIN
-# can override at runtime. Install failures stay fatal; only the cache clean is
-# tolerated.
-RUN python3.11 -m pip install --no-cache-dir "pip-audit==${PIP_AUDIT_VERSION}" \
+# pip-audit (upstream path again) and the optional harness binary. npm's
+# cache/logs are kept out of $HOME (npm_config_cache) so this RUN never
+# creates a root-owned /opt/traust/.npm alongside the 1001-owned workspace;
+# the assemble stage deletes its own .npm before the copy, so none ships.
+# The harness default maps to the adapter's name (claude -> `claude`);
+# TRAUST_CLI_<ID>_BIN can override at runtime. Install failures stay fatal;
+# only the cache clean is tolerated.
+RUN export npm_config_cache=/tmp/npm-cache \
+    && python3.11 -m pip install --no-cache-dir "pip-audit==${PIP_AUDIT_VERSION}" \
     && if [ "${HARNESS}" = "claude" ]; then \
          npm install -g @anthropic-ai/claude-code; \
        elif [ "${HARNESS}" = "codex" ]; then \
@@ -208,7 +212,8 @@ RUN python3.11 -m pip install --no-cache-dir "pip-audit==${PIP_AUDIT_VERSION}" \
        elif [ "${HARNESS}" != "none" ]; then \
          echo "unsupported HARNESS=${HARNESS}" >&2; exit 1; \
        fi \
-    && { npm cache clean --force 2>/dev/null || true; }
+    && { npm cache clean --force 2>/dev/null || true; } \
+    && rm -rf /tmp/npm-cache
 
 COPY --from=build /out/traust-cli /usr/local/bin/traust-cli
 COPY entrypoint-update-feeds.sh /usr/local/bin/entrypoint-update-feeds.sh

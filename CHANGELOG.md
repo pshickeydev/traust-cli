@@ -33,6 +33,11 @@ Initial implementation.
 
 ### Fixes from first field use
 
+- The toolkit image's `HOME` (`/opt/traust`) is owned by the runtime user
+  (`1001:0`, group-writable) instead of root, and npm's build-time cache no
+  longer creates a root-owned `/opt/traust/.npm` — tools writing per-user
+  state under `$HOME` (opengrep, claude) work with the default `HOME`
+  (#58, PR #59).
 - Budget policy parsing accepts the shipped sequence-form `bands:`
   (`- {at: 1.5, action: warn}`) in addition to the map form.
 - Harness failures now surface the stderr tail (provider 401s are visible
