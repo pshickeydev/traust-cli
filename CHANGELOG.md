@@ -27,7 +27,9 @@ Initial implementation.
   group-writable workspace files (verified for default rootless, arbitrary
   `--user …:0`, `--userns=keep-id` and `--read-only` runs), UBI
   security errata applied at build on top of the pinned base digest, declared
-  `VOLUME`s for run journals and `/tmp` (read-only-rootfs friendly), and
+  `VOLUME`s for run journals and `/tmp` (the runs dir is baked `1001:0` so
+  journal creation also works under runtimes that create missing volume
+  mountpoints root-owned), and
   PID-1 signal relay in the entrypoint so `podman stop` interrupts a feed
   refresh promptly.
 
