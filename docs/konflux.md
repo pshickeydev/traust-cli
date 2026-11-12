@@ -219,9 +219,13 @@ trade — the slim image remains the hermetic, Go-module-only artifact.
 | `SKIP_GRYPE_DB` | `0` | `1` drops the ~3 GB grype DB (grype re-fetches it at runtime when online); the osv offline DBs are kept. |
 
 `HOME=/opt/traust` is load-bearing: `init` writes the workspace to
-`$HOME/.traust` and stores **absolute** paths (venv, uv-managed Python, config
+$HOME/.traust and stores **absolute** paths (venv, uv-managed Python, config
 home, osv DB) in `state.json`/env. Do not override `HOME` when running the image,
-or state resolution breaks.
+or state resolution breaks. `$HOME` itself is owned `1001:0` and
+group-writable, and the build keeps npm's cache out of it, so tools that
+create per-user state under `$HOME` (opengrep's `~/.opengrep`, claude's
+`~/.claude`) work as the runtime user — older images shipped `/opt/traust`
+root-owned and broke them (issue #58).
 
 ### Build and smoke-test locally
 
@@ -245,8 +249,35 @@ podman run --rm \
   traust-cli-toolkit-plus-feeds:dev run secure-code-audit /work
 ```
 
-Mount a volume on `/opt/traust/.traust/cli/runs` to persist run journals
-across containers.
+The image declares `VOLUME ["/opt/traust/.traust/cli/runs", "/tmp"]`, so run
+journals persist across containers (name the volume, e.g.
+`-v traust-runs:/opt/traust/.traust/cli/runs`, to keep them beyond one
+`podman run --rm`) and `/tmp` stays writable under `podman run --read-only`.
+The runs directory is baked into the image (`1001:0`, group-writable) — a
+volume mounted at a path absent from the image is created root-owned by some
+runtimes (Docker), which would block journal creation for the non-root user.
+
+The image follows Red Hat's container-image guidelines for rootless use: it
+runs as the non-root uid 1001 in the root group with group-writable (`g=u`)
+files under `/opt/traust`, and the build applies UBI security errata newer
+than the pinned base digest. Write behavior verified on rootless podman 5:
+
+| Invocation | `/opt/traust` workspace | runs volume | `/tmp` |
+|---|---|---|---|
+| default (uid 1001 via the subuid map) | writable | writable | writable |
+| `--user 1234:0` (arbitrary uid, root group) | writable | writable | writable |
+| `--userns=keep-id` | writable | writable | writable |
+| `--read-only` + `SKIP_FEED_UPDATE=1` | read-only | writable | writable |
+
+Under `--userns=keep-id` the process keeps the image's uid 1001 (mapped into
+the subuid pool) and gains the invoking user's uid/gid as a supplementary
+identity, so host-owned bind mounts stay group-accessible. A read-only
+rootfs (with `SKIP_FEED_UPDATE=1`) suits read-only commands — `--version`,
+`skills`, `doctor` — whose writes stay on the declared volumes. A full `run`
+needs the writable image layer: the harness executes in the baked traust
+checkout and writes its reports there, and agent harnesses keep their own
+state under `$HOME` (`~/.claude`, `~/.opengrep`), none of which is on a
+declared volume.
 
 The one expected non-green `doctor` item is deployment config the image
 deliberately does not bake:

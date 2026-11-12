@@ -22,10 +22,24 @@ Initial implementation.
   vulnerability feeds (grype DB + osv-scanner offline databases, with `feeds.yaml`
   set to air-gapped) via `init` at build time — `run` works with only harness
   credentials at runtime and no external vuln lookups. Built by a separate,
-  non-hermetic Konflux component.
+  non-hermetic Konflux component. The toolkit image follows Red Hat's
+  container-image guidelines: non-root uid 1001 in the root group with
+  group-writable workspace files (verified for default rootless, arbitrary
+  `--user …:0`, `--userns=keep-id` and `--read-only` runs), UBI
+  security errata applied at build on top of the pinned base digest, declared
+  `VOLUME`s for run journals and `/tmp` (the runs dir is baked `1001:0` so
+  journal creation also works under runtimes that create missing volume
+  mountpoints root-owned), and
+  PID-1 signal relay in the entrypoint so `podman stop` interrupts a feed
+  refresh promptly.
 
 ### Fixes from first field use
 
+- The toolkit image's `HOME` (`/opt/traust`) is owned by the runtime user
+  (`1001:0`, group-writable) instead of root, and npm's build-time cache no
+  longer creates a root-owned `/opt/traust/.npm` — tools writing per-user
+  state under `$HOME` (opengrep, claude) work with the default `HOME`
+  (#58, PR #59).
 - Budget policy parsing accepts the shipped sequence-form `bands:`
   (`- {at: 1.5, action: warn}`) in addition to the map form.
 - Harness failures now surface the stderr tail (provider 401s are visible

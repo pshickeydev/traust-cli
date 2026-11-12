@@ -139,7 +139,12 @@ SCRIPT
 # Drop build caches and set group-writable modes IN THIS STAGE so the single
 # COPY into the runtime stage carries them (no post-copy layer duplicates the
 # multi-GB tree). The osv/grype DBs under the workspace are kept.
+# cli/runs is pre-created here (1001:0, g=u via the COPY) because the runtime
+# stage declares it a VOLUME: a volume mounted at a path absent from the
+# image is created root-owned by some runtimes (Docker), which would block
+# journal creation (NewJournal's MkdirAll) for the non-root user.
 RUN rm -rf /opt/traust/.cache/go-build /opt/traust/.cache/uv /opt/traust/go /opt/traust/.npm \
+    && mkdir -p /opt/traust/.traust/cli/runs \
     && if [ "${SKIP_GRYPE_DB}" = "1" ]; then rm -rf /opt/traust/.cache/grype; fi \
     && chmod -R g=u /opt/traust
 
@@ -184,19 +189,27 @@ skills with only harness credentials injected at runtime." \
       distribution-scope="private"
 
 # Runtime deps. golang stays: govulncheck loads the target's package graph via
-# `go` at scan time. nodejs:22 only when a harness is bundled.
-RUN dnf install -y --setopt=install_weak_deps=False --nodocs \
+# `go` at scan time. nodejs:22 only when a harness is bundled. The base image
+# is digest-pinned, so Red Hat's image best practice is to apply security
+# errata newer than the base release before installing (certification
+# requirement: no Important/Critical CVEs at build time).
+RUN dnf update-minimal -y --security --sec-severity=Important --sec-severity=Critical \
+    && dnf install -y --setopt=install_weak_deps=False --nodocs \
         git-core bash tar gzip findutils ca-certificates golang python3.11 python3.11-pip \
     && if [ "${HARNESS}" != "none" ]; then \
          dnf module install -y --setopt=install_weak_deps=False nodejs:22/common; \
        fi \
     && dnf clean all && rm -rf /var/cache/dnf
 
-# pip-audit (upstream path again) and the optional harness binary. The harness
-# default maps to the adapter's name (claude -> `claude`); TRAUST_CLI_<ID>_BIN
-# can override at runtime. Install failures stay fatal; only the cache clean is
-# tolerated.
-RUN python3.11 -m pip install --no-cache-dir "pip-audit==${PIP_AUDIT_VERSION}" \
+# pip-audit (upstream path again) and the optional harness binary. npm's
+# cache/logs are kept out of $HOME (npm_config_cache) so this RUN never
+# creates a root-owned /opt/traust/.npm alongside the 1001-owned workspace;
+# the assemble stage deletes its own .npm before the copy, so none ships.
+# The harness default maps to the adapter's name (claude -> `claude`);
+# TRAUST_CLI_<ID>_BIN can override at runtime. Install failures stay fatal;
+# only the cache clean is tolerated.
+RUN export npm_config_cache=/tmp/npm-cache \
+    && python3.11 -m pip install --no-cache-dir "pip-audit==${PIP_AUDIT_VERSION}" \
     && if [ "${HARNESS}" = "claude" ]; then \
          npm install -g @anthropic-ai/claude-code; \
        elif [ "${HARNESS}" = "codex" ]; then \
@@ -204,10 +217,16 @@ RUN python3.11 -m pip install --no-cache-dir "pip-audit==${PIP_AUDIT_VERSION}" \
        elif [ "${HARNESS}" != "none" ]; then \
          echo "unsupported HARNESS=${HARNESS}" >&2; exit 1; \
        fi \
-    && { npm cache clean --force 2>/dev/null || true; }
+    && { npm cache clean --force 2>/dev/null || true; } \
+    && rm -rf /tmp/npm-cache
 
 COPY --from=build /out/traust-cli /usr/local/bin/traust-cli
 COPY entrypoint-update-feeds.sh /usr/local/bin/entrypoint-update-feeds.sh
+
+# COPY merges directory contents without updating an existing HOME directory's
+# ownership. Tools such as opengrep and claude need to create settings here.
+# Set only HOME itself before the large workspace copy (no recursive layer).
+RUN mkdir -p "${HOME}" && chown 1001:0 "${HOME}" && chmod g=u "${HOME}"
 
 # The finished workspace, copied once (owner 1001, group 0; group-writable modes
 # were set in the assemble stage) — no post-copy chown/chmod layer to duplicate
@@ -217,6 +236,15 @@ COPY --from=assemble --chown=1001:0 /opt/traust /opt/traust
 # Certification tooling (ecosystem-cert-preflight-checks HasLicense) looks for
 # license text at the absolute path /licenses.
 COPY LICENSE /licenses/LICENSE
+
+# Declare the paths the container writes at runtime so they are discoverable:
+# run journals (<workspace>/cli/runs/<id>) are the state worth persisting
+# across containers, and /tmp absorbs scratch writes from git/scanners. With
+# SKIP_FEED_UPDATE=1 this also keeps read-only commands (--version, skills,
+# doctor) working under `podman run --read-only`. A full `run` needs the
+# writable layer: the harness executes in the baked traust checkout, and both
+# its reports and the agent harness's own $HOME state land under /opt/traust.
+VOLUME ["/opt/traust/.traust/cli/runs", "/tmp"]
 
 USER 1001
 WORKDIR /opt/traust
