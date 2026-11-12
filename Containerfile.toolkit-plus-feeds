@@ -184,8 +184,12 @@ skills with only harness credentials injected at runtime." \
       distribution-scope="private"
 
 # Runtime deps. golang stays: govulncheck loads the target's package graph via
-# `go` at scan time. nodejs:22 only when a harness is bundled.
-RUN dnf install -y --setopt=install_weak_deps=False --nodocs \
+# `go` at scan time. nodejs:22 only when a harness is bundled. The base image
+# is digest-pinned, so Red Hat's image best practice is to apply security
+# errata newer than the base release before installing (certification
+# requirement: no Important/Critical CVEs at build time).
+RUN dnf update-minimal -y --security --sec-severity=Important --sec-severity=Critical \
+    && dnf install -y --setopt=install_weak_deps=False --nodocs \
         git-core bash tar gzip findutils ca-certificates golang python3.11 python3.11-pip \
     && if [ "${HARNESS}" != "none" ]; then \
          dnf module install -y --setopt=install_weak_deps=False nodejs:22/common; \
@@ -217,6 +221,14 @@ COPY --from=assemble --chown=1001:0 /opt/traust /opt/traust
 # Certification tooling (ecosystem-cert-preflight-checks HasLicense) looks for
 # license text at the absolute path /licenses.
 COPY LICENSE /licenses/LICENSE
+
+# Declare the paths the container writes at runtime so they are discoverable
+# and the image stays usable under `podman run --read-only`: run journals
+# (<workspace>/cli/runs/<id>) are the state worth persisting across
+# containers, and /tmp absorbs scratch writes from git/scanners. Set
+# SKIP_FEED_UPDATE=1 for read-only runs (the feed refresh writes into
+# /opt/traust, which only works on the writable image layer).
+VOLUME ["/opt/traust/.traust/cli/runs", "/tmp"]
 
 USER 1001
 WORKDIR /opt/traust

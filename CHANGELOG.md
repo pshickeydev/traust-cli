@@ -22,7 +22,14 @@ Initial implementation.
   vulnerability feeds (grype DB + osv-scanner offline databases, with `feeds.yaml`
   set to air-gapped) via `init` at build time — `run` works with only harness
   credentials at runtime and no external vuln lookups. Built by a separate,
-  non-hermetic Konflux component.
+  non-hermetic Konflux component. The toolkit image follows Red Hat's
+  container-image guidelines: non-root uid 1001 in the root group with
+  group-writable workspace files (verified for default rootless, arbitrary
+  `--user …:0`, `--userns=keep-id` and `--read-only` runs), UBI
+  security errata applied at build on top of the pinned base digest, declared
+  `VOLUME`s for run journals and `/tmp` (read-only-rootfs friendly), and
+  PID-1 signal relay in the entrypoint so `podman stop` interrupts a feed
+  refresh promptly.
 
 ### Fixes from first field use
 
