@@ -66,23 +66,42 @@ Before the first release to `quay.io/traust-security` can succeed:
 2. Create a Quay robot account in `traust-security` with **write** permission on
    those three repositories only.
 3. Create the `traust-security-quay-push` secret in
-   `source-code-intelligence-tenant`, keyed to `quay.io/traust-security` (not
-   bare `quay.io`, so `select-oci-auth` never collides with the tenant's
-   `quay.io/redhat-user-workloads/...` pull secrets):
+   `source-code-intelligence-tenant` using **only** that robot account, keyed
+   to `quay.io/traust-security` (not bare `quay.io`, so `select-oci-auth` never
+   collides with the tenant's `quay.io/redhat-user-workloads/...` pull
+   secrets). Rewriting the auth key scopes credential lookup only — it does not
+   restrict the account's Quay permissions, so never log in with a personal or
+   broadly privileged Quay account:
 
    ```sh
    (
      set -e
      umask 077
+     robot='traust-security+<robot>'
+     case "$robot" in
+       'traust-security+<robot>') echo "replace <robot> with your robot name" >&2; exit 1 ;;
+       traust-security+?*) ;;
+       *) echo "refusing non-robot account: $robot" >&2; exit 1 ;;
+     esac
      dir="$(mktemp -d)"
      trap 'rm -rf "$dir"' EXIT
-     podman login --authfile "$dir/raw.json" quay.io
+     podman login --authfile "$dir/raw.json" -u "$robot" quay.io
+     logged_in="$(podman login --authfile "$dir/raw.json" --get-login quay.io)"
+     test "$logged_in" = "$robot" || { echo "unexpected login: $logged_in" >&2; exit 1; }
      jq '{auths: {"quay.io/traust-security": .auths["quay.io"]}}' "$dir/raw.json" > "$dir/scoped.json"
      oc create secret generic traust-security-quay-push \
        -n source-code-intelligence-tenant \
        --type=kubernetes.io/dockerconfigjson \
        --from-file=.dockerconfigjson="$dir/scoped.json"
    )
+   ```
+
+   Verify the stored secret identifies only the restricted robot (without
+   printing the token):
+
+   ```sh
+   oc get secret traust-security-quay-push -n source-code-intelligence-tenant -o json \
+     | jq -r '.data[".dockerconfigjson"] | @base64d | fromjson | .auths | to_entries[] | "\(.key): \(.value.auth | @base64d | split(":")[0])"'
    ```
 
 ### Scope
