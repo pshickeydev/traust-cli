@@ -85,10 +85,12 @@ Before the first release to `quay.io/traust-security` can succeed:
      esac
      dir="$(mktemp -d)"
      trap 'rm -rf "$dir"' EXIT
-     podman login --authfile "$dir/raw.json" -u "$robot" quay.io
-     logged_in="$(podman login --authfile "$dir/raw.json" --get-login quay.io)"
-     test "$logged_in" = "$robot" || { echo "unexpected login: $logged_in" >&2; exit 1; }
-     jq '{auths: {"quay.io/traust-security": .auths["quay.io"]}}' "$dir/raw.json" > "$dir/scoped.json"
+     podman login --compat-auth-file "$dir/raw.json" -u "$robot" quay.io
+     jq -e --arg robot "$robot" '
+       .auths["quay.io"] as $entry
+       | select(($entry.auth | strings | @base64d | split(":")[0]) == $robot)
+       | {auths: {"quay.io/traust-security": $entry}}
+     ' "$dir/raw.json" > "$dir/scoped.json"
      oc create secret generic traust-security-quay-push \
        -n source-code-intelligence-tenant \
        --type=kubernetes.io/dockerconfigjson \
